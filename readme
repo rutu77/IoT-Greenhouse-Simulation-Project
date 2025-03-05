@@ -1,65 +1,192 @@
+CREATE DATABASE ELMS;
+USE ELMS;
 
-  isCustomer(): boolean {
-    const role = this.getRole();
-    if (!role) {
-      alert("Login first!");
-      this.router.navigate(['user/login']);
-      return false;
-    }
-    if (role !== Role.Customer) {
-      alert("You don't have access");
-      return false;
-    }
-    return true;
+CREATE TABLE Employees (
+    id INT IDENTITY(1,1) PRIMARY KEY,
+    name VARCHAR(100) NOT NULL,
+    email VARCHAR(100) UNIQUE NOT NULL,
+    role VARCHAR(20) CHECK (role IN ('Employee', 'Manager', 'Admin')) NOT NULL
+);
+
+CREATE TABLE Leaves (
+    id INT IDENTITY(1,1) PRIMARY KEY,
+    employee_id INT FOREIGN KEY REFERENCES Employees(id) ON DELETE CASCADE,
+    start_date DATE NOT NULL,
+    end_date DATE NOT NULL,
+    leave_type VARCHAR(20) CHECK (leave_type IN ('Sick', 'Vacation')) NOT NULL,
+    status VARCHAR(20) CHECK (status IN ('Pending', 'Approved', 'Rejected')) DEFAULT 'Pending',
+    reason TEXT
+);
+
+
+class Leave {
+  constructor(id, employee_id, start_date, end_date, leave_type, status, reason) {
+    this.id = id;
+    this.employee_id = employee_id;
+    this.start_date = start_date;
+    this.end_date = end_date;
+    this.leave_type = leave_type;
+    this.status = status;
+    this.reason = reason;
+  }
+}
+module.exports = Leave;
+
+
+
+const { sql, poolPromise } = require("../config/db");
+
+class LeaveRepository {
+  async createLeave(leave) {
+    const pool = await poolPromise;
+    return pool
+      .request()
+      .input("employee_id", sql.Int, leave.employee_id)
+      .input("start_date", sql.Date, leave.start_date)
+      .input("end_date", sql.Date, leave.end_date)
+      .input("leave_type", sql.VarChar, leave.leave_type)
+      .input("reason", sql.Text, leave.reason)
+      .query("INSERT INTO Leaves (employee_id, start_date, end_date, leave_type, reason) VALUES (@employee_id, @start_date, @end_date, @leave_type, @reason)");
   }
 
-  isManager(): boolean {
-    const role = this.getRole();
-    if (!role) {
-      alert("Login first!");
-      this.router.navigate(['user/login']);
-      return false;
-    }
-    if (role !== Role.Manager) {
-      alert("You don't have access");
-      return false;
-    }
-    return true;
+  async getLeaveHistory(employeeId) {
+    const pool = await poolPromise;
+    return pool.request()
+      .input("employee_id", sql.Int, employeeId)
+      .query("SELECT * FROM Leaves WHERE employee_id = @employee_id");
   }
 
-  isAdmin(): boolean {
-    const role = this.getRole();
-    if (!role) {
-      alert("Login first!");
-      this.router.navigate(['user/login']);
-      return false;
-    }
-    if (role !== Role.Admin) {
-      alert("You don't have access");
-      return false;
-    }
-    return true;
+  async getPendingLeaves() {
+    const pool = await poolPromise;
+    return pool.request().query("SELECT * FROM Leaves WHERE status = 'Pending'");
+  }
+
+  async updateLeaveStatus(leaveId, status) {
+    const pool = await poolPromise;
+    return pool.request()
+      .input("leaveId", sql.Int, leaveId)
+      .input("status", sql.VarChar, status)
+      .query("UPDATE Leaves SET status = @status WHERE id = @leaveId");
+  }
+
+  async getLeaveReport() {
+    const pool = await poolPromise;
+    return pool.request().query("SELECT * FROM Leaves");
   }
 }
 
+module.exports = new LeaveRepository();
 
 
 
 
 
-import { Injectable } from '@angular/core';
-import { ActivatedRouteSnapshot, CanActivate, Router, RouterStateSnapshot } from '@angular/router';
-import { AuthService } from './auth.service';
-import { Role } from './role.enum';
+const LeaveRepository = require("../repositories/leaveRepository");
 
-@Injectable({
-  providedIn: 'root'
-})
-export class CustomerGuard implements CanActivate {
-  constructor(private authService: AuthService, private router: Router) { }
+class LeaveService {
+  async applyLeave(leaveData) {
+    if (!leaveData.start_date || !leaveData.end_date || !leaveData.leave_type) {
+      throw new Error("All fields are required!");
+    }
+    return await LeaveRepository.createLeave(leaveData);
+  }
 
-  canActivate(route: ActivatedRouteSnapshot, state: RouterStateSnapshot): boolean {
-    return this.authService.isCustomer();
+  async getLeaveHistory(employeeId) {
+    return await LeaveRepository.getLeaveHistory(employeeId);
+  }
+
+  async getPendingLeaves() {
+    return await LeaveRepository.getPendingLeaves();
+  }
+
+  async approveLeave(leaveId) {
+    return await LeaveRepository.updateLeaveStatus(leaveId, "Approved");
+  }
+
+  async rejectLeave(leaveId) {
+    return await LeaveRepository.updateLeaveStatus(leaveId, "Rejected");
+  }
+
+  async getLeaveReport() {
+    return await LeaveRepository.getLeaveReport();
   }
 }
 
+module.exports = new LeaveService();
+
+
+const LeaveService = require("../services/leaveService");
+
+class LeaveController {
+  async applyLeave(req, res) {
+    try {
+      await LeaveService.applyLeave(req.body);
+      res.status(201).json({ message: "Leave applied successfully" });
+    } catch (error) {
+      res.status(400).json({ error: error.message });
+    }
+  }
+
+  async getLeaveHistory(req, res) {
+    const employeeId = req.params.employeeId;
+    const leaves = await LeaveService.getLeaveHistory(employeeId);
+    res.json(leaves.recordset);
+  }
+
+  async getPendingLeaves(req, res) {
+    const leaves = await LeaveService.getPendingLeaves();
+    res.json(leaves.recordset);
+  }
+
+  async approveLeave(req, res) {
+    await LeaveService.approveLeave(req.params.leaveId);
+    res.json({ message: "Leave approved" });
+  }
+
+  async rejectLeave(req, res) {
+    await LeaveService.rejectLeave(req.params.leaveId);
+    res.json({ message: "Leave rejected" });
+  }
+
+  async getLeaveReport(req, res) {
+    const leaves = await LeaveService.getLeaveReport();
+    res.json(leaves.recordset);
+  }
+}
+
+module.exports = new LeaveController();
+
+
+const express = require("express");
+const LeaveController = require("../controllers/leaveController");
+
+const router = express.Router();
+
+router.post("/leaves", LeaveController.applyLeave);
+router.get("/leaves/:employeeId", LeaveController.getLeaveHistory);
+router.get("/leaves/pending", LeaveController.getPendingLeaves);
+router.put("/leaves/:leaveId/approve", LeaveController.approveLeave);
+router.put("/leaves/:leaveId/reject", LeaveController.rejectLeave);
+router.get("/leaves/report", LeaveController.getLeaveReport);
+
+module.exports = router;
+
+
+
+const express = require("express");
+const bodyParser = require("body-parser");
+const leaveRoutes = require("./routes/leaveRoutes");
+
+const app = express();
+app.use(bodyParser.json());
+
+app.use("/api", leaveRoutes);
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
+});
+
+
+npm init -y
+npm install express mssql body-parser dotenv
