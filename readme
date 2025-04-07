@@ -1,17 +1,356 @@
-async getPendingLeaves() {
-    const pool = await poolPromise;
-    const result = await pool
-        .request()
-        .query("SELECT * FROM Leaves WHERE status = 'Pending'");
+export interface Question {
+  id?: number;
+  question: string;
+  options: string[];
+  correctAnswer: string;
+  explanation?: string;
+}
 
-    console.log("Raw Query Result:", result); // Debugging log
+export interface Quiz {
+  id?: number;
+  courseId: number;
+  questions: Question[];
+}
 
-    if (!result || !result.recordset) {
-        console.error("Error: Query did not return a recordset");
-        return [];
-    }
 
-    console.log("Pending Leaves Query Result:", result.recordset); // Debugging log
+import { Component, OnInit } from '@angular/core';
+import { QuizService } from '../../services/quiz.service';
+import { Quiz } from '../../models/quiz.model';
 
-    return result.recordset; // Ensure we return the correct array
+@Component({
+  selector: 'app-quiz-list',
+  templateUrl: './quiz-list.component.html',
+})
+export class QuizListComponent implements OnInit {
+  quizzes: Quiz[] = [];
+
+  constructor(private quizService: QuizService) {}
+
+  ngOnInit(): void {
+    this.quizService.getQuizzes().subscribe((data) => this.quizzes = data);
+  }
+}
+
+
+
+<h2>All Quizzes</h2>
+<ul>
+  <li *ngFor="let quiz of quizzes">
+    Quiz ID: {{ quiz.id }} | Course ID: {{ quiz.courseId }}
+  </li>
+</ul>
+
+
+
+import { Component, EventEmitter, Output } from '@angular/core';
+import { QuizService } from '../../services/quiz.service';
+import { Quiz } from '../../models/quiz.model';
+
+@Component({
+  selector: 'app-create-quiz',
+  templateUrl: './create-quiz.component.html',
+})
+export class CreateQuizComponent {
+  @Output() quizCreated = new EventEmitter<void>();
+
+  courseId: number = 0;
+
+  constructor(private quizService: QuizService) {}
+
+  createQuiz() {
+    const newQuiz: Quiz = { courseId: this.courseId };
+    this.quizService.createQuiz(newQuiz).subscribe(() => {
+      this.courseId = 0;
+      this.quizCreated.emit();
+    });
+  }
+}
+<h3>Create Quiz</h3>
+<input type="number" [(ngModel)]="courseId" placeholder="Course ID">
+<button (click)="createQuiz()">Create</button>
+
+
+
+import { Component, Input, Output, EventEmitter } from '@angular/core';
+import { Question } from '../../models/question.model';
+
+@Component({
+  selector: 'app-question-list',
+  templateUrl: './question-list.component.html',
+})
+export class QuestionListComponent {
+  @Input() questions: Question[] = [];
+  @Output() delete = new EventEmitter<number>();
+}
+<h3>Questions</h3>
+<div *ngFor="let q of questions">
+  <p><strong>Q:</strong> {{ q.question }}</p>
+  <ul>
+    <li *ngFor="let option of q.options">{{ option }}</li>
+  </ul>
+  <p><strong>Answer:</strong> {{ q.correctAnswer }}</p>
+  <button (click)="delete.emit(q.id!)">Delete</button>
+</div>
+
+
+
+
+import { Component, Input, Output, EventEmitter } from '@angular/core';
+import { Question } from '../../models/question.model';
+import { QuizService } from '../../services/quiz.service';
+
+@Component({
+  selector: 'app-create-question',
+  templateUrl: './create-question.component.html',
+})
+export class CreateQuestionComponent {
+  @Input() quizId!: number;
+  @Output() questionCreated = new EventEmitter<void>();
+
+  questionText = '';
+  options: string[] = ['', '', '', ''];
+  correctAnswer = '';
+  explanation = '';
+
+  constructor(private quizService: QuizService) {}
+
+  createQuestion() {
+    const question: Question = {
+      quizId: this.quizId,
+      question: this.questionText,
+      options: this.options,
+      correctAnswer: this.correctAnswer,
+      explanation: this.explanation,
+    };
+
+    this.quizService.createQuestion(question).subscribe(() => {
+      this.questionCreated.emit();
+      this.resetForm();
+    });
+  }
+
+  resetForm() {
+    this.questionText = '';
+    this.options = ['', '', '', ''];
+    this.correctAnswer = '';
+    this.explanation = '';
+  }
+}
+<h3>Create Question</h3>
+<input [(ngModel)]="questionText" placeholder="Question">
+<div *ngFor="let opt of options; let i = index">
+  <input [(ngModel)]="options[i]" placeholder="Option {{ i + 1 }}">
+</div>
+<input [(ngModel)]="correctAnswer" placeholder="Correct Answer">
+<input [(ngModel)]="explanation" placeholder="Explanation (optional)">
+<button (click)="createQuestion()">Add Question</button>
+
+
+
+import { Component, Input, OnInit } from '@angular/core';
+import { QuizService } from '../../services/quiz.service';
+import { Question } from '../../models/question.model';
+
+@Component({
+  selector: 'app-take-quiz',
+  templateUrl: './take-quiz.component.html',
+})
+export class TakeQuizComponent implements OnInit {
+  @Input() quizId!: number;
+  questions: Question[] = [];
+  userAnswers: string[] = [];
+  resultShown = false;
+  score = 0;
+
+  constructor(private quizService: QuizService) {}
+
+  ngOnInit(): void {
+    this.quizService.getQuestions(this.quizId).subscribe((questions) => {
+      this.questions = questions;
+      this.userAnswers = new Array(questions.length).fill('');
+    });
+  }
+
+  submitQuiz() {
+    this.score = this.questions.reduce((acc, q, i) => {
+      return acc + (q.correctAnswer === this.userAnswers[i] ? 1 : 0);
+    }, 0);
+    this.resultShown = true;
+  }
+}
+
+
+
+<h3>Take Quiz</h3>
+<div *ngFor="let question of questions; let i = index">
+  <p>{{ question.question }}</p>
+  <div *ngFor="let option of question.options">
+    <input type="radio" 
+           [name]="'q' + i" 
+           [value]="option"
+           [(ngModel)]="userAnswers[i]">
+    {{ option }}
+  </div>
+</div>
+
+<button (click)="submitQuiz()">Submit</button>
+
+<div *ngIf="resultShown">
+  <h4>Your Score: {{ score }} / {{ questions.length }}</h4>
+</div>
+
+
+
+@Entity({ name: 'QuizProgress' })
+export class QuizProgress {
+  @PrimaryGeneratedColumn()
+  id: number;
+
+  @ManyToOne(() => User)
+  @JoinColumn({ name: 'user_id' })
+  user: User;
+
+  @ManyToOne(() => Quiz)
+  @JoinColumn({ name: 'quiz_id' })
+  quiz: Quiz;
+
+  @Column()
+  score: number;
+
+  @Column()
+  total: number;
+
+  @Column({ type: 'timestamp', default: () => 'CURRENT_TIMESTAMP' })
+  takenAt: Date;
+}
+
+@Component({
+  selector: 'app-progress',
+  templateUrl: './progress.component.html',
+})
+export class ProgressComponent implements OnInit {
+  userId = Number(localStorage.getItem('userId'));
+  progressList: any[] = [];
+
+  constructor(private quizService: QuizService) {}
+
+  ngOnInit() {
+    this.quizService.getUserProgress(this.userId).subscribe(data => {
+      this.progressList = data;
+    });
+  }
+}
+
+
+
+<h3>Your Quiz Progress</h3>
+<table>
+  <tr>
+    <th>Quiz ID</th>
+    <th>Score</th>
+    <th>Total</th>
+    <th>Date</th>
+  </tr>
+  <tr *ngFor="let p of progressList">
+    <td>{{ p.quiz.id }}</td>
+    <td>{{ p.score }}</td>
+    <td>{{ p.total }}</td>
+    <td>{{ p.takenAt | date }}</td>
+  </tr>
+</table>
+
+
+role = localStorage.getItem('role'); // 'teacher' or 'student'
+
+canEditQuiz() {
+  return this.role === 'teacher';
+}
+
+
+<div *ngIf="canEditQuiz()">
+  <app-create-quiz></app-create-quiz>
+</div>
+
+
+
+
+import { AppDataSource } from '../data-source';
+import { QuizProgress } from '../entities/QuizProgress';
+import { User } from '../entities/User';
+import { Quiz } from '../entities/Quiz';
+
+const quizProgressRepo = AppDataSource.getRepository(QuizProgress);
+
+export const saveProgress = async (userId: number, quizId: number, score: number, total: number) => {
+  const progress = quizProgressRepo.create({
+    user: { id: userId } as User,
+    quiz: { id: quizId } as Quiz,
+    score,
+    total,
+  });
+  return await quizProgressRepo.save(progress);
+};
+
+export const getProgressByUser = async (userId: number) => {
+  return await quizProgressRepo.find({
+    where: { user: { id: userId } },
+    relations: ['quiz'],
+    order: { takenAt: 'DESC' },
+  });
+};
+
+
+
+import { Request, Response } from 'express';
+import * as quizProgressService from '../services/quizProgress.service';
+
+export const submitProgress = async (req: Request, res: Response) => {
+  try {
+    const { userId, quizId, score, total } = req.body;
+    const result = await quizProgressService.saveProgress(userId, quizId, score, total);
+    res.status(201).json({ message: 'Progress saved', data: result });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to save progress' });
+  }
+};
+
+export const getUserProgress = async (req: Request, res: Response) => {
+  try {
+    const userId = Number(req.params.userId);
+    const progress = await quizProgressService.getProgressByUser(userId);
+    res.status(200).json(progress);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch progress' });
+  }
+};
+
+
+import { Router } from 'express';
+import * as quizProgressController from '../controllers/quizProgress.controller';
+
+const router = Router();
+
+router.post('/submit', quizProgressController.submitProgress);
+router.get('/user/:userId', quizProgressController.getUserProgress);
+
+export default router;
+
+
+
+import { Injectable } from '@angular/core';
+import { CanActivate, ActivatedRouteSnapshot, Router } from '@angular/router';
+
+@Injectable({ providedIn: 'root' })
+export class RoleGuard implements CanActivate {
+  constructor(private router: Router) {}
+
+  canActivate(route: ActivatedRouteSnapshot): boolean {
+    const expectedRole = route.data['role'];
+    const actualRole = localStorage.getItem('role');
+
+    if (expectedRole === actualRole) return true;
+
+    this.router.navigate(['/unauthorized']);
+    return false;
+  }
 }
